@@ -200,8 +200,30 @@ class FetchEmailsAndWriteToSheet(APIView):
         sheet = sheets_service.spreadsheets()
         sheet.values().clear(spreadsheetId=spreadsheet_id, range=range_name).execute()
 
-    def write_to_sheet(self, sheets_service, data):
-        """Write email data to Google Sheets, including column titles."""
+    def create_new_sheet(self, sheets_service):
+        """Create a new Google Sheet programmatically and return its spreadsheet ID."""
+        # Request body for creating a new spreadsheet
+        sheet_body = {
+            'properties': {
+                'title': 'New Email Data Sheet'  # Set the title for the new sheet
+            }
+        }
+
+        # Create the new spreadsheet
+        sheet = sheets_service.spreadsheets().create(body=sheet_body).execute()
+
+        # Get the spreadsheet ID of the new sheet
+        spreadsheet_id = sheet['spreadsheetId']
+        print(f"New spreadsheet created with ID: {spreadsheet_id}")
+
+        # Construct the Google Sheet URL
+        sheet_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}"
+        print(f"New spreadsheet URL: {sheet_url}")
+
+        return spreadsheet_id
+
+    def write_to_sheet(self, sheets_service, data, spreadsheet_id):
+        """Write email data to a newly created Google Sheet, including column titles."""
         sheet = sheets_service.spreadsheets()
 
         # Define the headers (titles for columns)
@@ -212,16 +234,18 @@ class FetchEmailsAndWriteToSheet(APIView):
             'values': [headers] + data  # Add the headers as the first row
         }
 
-        self.clear_sheet(sheets_service, SPREADSHEET_ID, RANGE_NAME)
+        # Write data to the new sheet (using 'Sheet1' by default for a new sheet)
+        RANGE_NAME = 'Sheet1!A1'  # This writes to the first sheet in the new spreadsheet
 
+        # Write the data
         sheet.values().append(
-            spreadsheetId=SPREADSHEET_ID,
+            spreadsheetId=spreadsheet_id,
             range=RANGE_NAME,
             valueInputOption='RAW',
             body=body
         ).execute()
 
-    def get_drive_service(credentials):
+    def get_drive_service(self, credentials):
         """Create and return the Google Drive API service."""
         return build('drive', 'v3', credentials=credentials)
 
@@ -269,7 +293,11 @@ class FetchEmailsAndWriteToSheet(APIView):
         if all_emails:
             # Initialize the Google Sheets service and write the data (similar to before)
             sheets_service = build('sheets', 'v4', credentials=creds)
-            self.write_to_sheet(sheets_service, all_emails)
+
+            # Create a new sheet and get its spreadsheet ID
+            new_spreadsheet_id = self.create_new_sheet(sheets_service)
+
+            self.write_to_sheet(sheets_service, all_emails, new_spreadsheet_id)
 
             # Now share the Google Sheet programmatically with the user
             drive_service = self.get_drive_service(creds)
