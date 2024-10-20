@@ -50,7 +50,7 @@
     <script>
         // URL of your backend where OAuth is initialized
         const baseUrl = "{{ base_url }}";
-        const authUrl = `${baseUrl}//oauth2initiate`;
+        const authUrl = `${baseUrl}/oauth2initiate`;
 
         // When the user clicks the "Initialize Google OAuth" button
         document.getElementById('auth-button').addEventListener('click', function () {
@@ -58,7 +58,7 @@
         });
 
         // URL of your backend to fetch the data after OAuth is completed
-        const fetchDataUrl = `${baseUrl}//fetch-emails/`;
+        const fetchDataUrl = `${baseUrl}/fetch-emails/`;
 
         // When the user clicks the "Fetch Data" button
         document.getElementById('fetch-data-button').addEventListener('click', function () {

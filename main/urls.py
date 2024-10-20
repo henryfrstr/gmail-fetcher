@@ -15,9 +15,13 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
+from fetch.views import GoogleOAuthInitiateView, GoogleOAuthCallbackView, FetchEmailsAndWriteToSheet
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('', include("fetch.urls")),
-    path('home', include('frontend.urls')),
+    path('oauth2initiate', GoogleOAuthInitiateView.as_view(), name='oauth2_initiate'),
+    path('oauth2callback', GoogleOAuthCallbackView.as_view(), name='oauth2_callback'),
+    path('fetch-emails/', FetchEmailsAndWriteToSheet.as_view(), name='fetch_emails'),
+    # path('', include("fetch.urls")),
+    path('', include('frontend.urls')),
 ]
