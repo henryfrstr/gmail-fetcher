@@ -19,10 +19,11 @@ import requests
 from decouple import config
 import json
 import os
-import re
+
 
 # Define where the credentials file will be saved (same level as your view)
 CREDENTIALS_FILE_PATH = os.path.join(os.path.dirname(__file__), 'credentials.json')
+BASE_URL = config('BASE_URL')
 
 # Build the credentials dictionary using decouple.config
 GOOGLE_CREDENTIALS = {
@@ -62,7 +63,7 @@ class GoogleOAuthInitiateView(APIView):
     def get(self, request, *args, **kwargs):
         """Initiate OAuth flow to authorize a Gmail account."""
         flow = Flow.from_client_secrets_file(CREDENTIALS_FILE_PATH, SCOPES)
-        flow.redirect_uri = 'https://localhost:8000/oauth2callback'
+        flow.redirect_uri = f'{BASE_URL}/oauth2callback'
 
         # Generate the authorization URL
         authorization_url, _ = flow.authorization_url(
@@ -79,7 +80,7 @@ class GoogleOAuthCallbackView(APIView):
     def get(self, request, *args, **kwargs):
         """Handle the callback from Google and save the credentials."""
         flow = Flow.from_client_secrets_file(CREDENTIALS_FILE_PATH, SCOPES)
-        flow.redirect_uri = 'https://localhost:8000/oauth2callback'
+        flow.redirect_uri = f'{BASE_URL}/oauth2callback'
 
         # Get the authorization code from the URL query parameters
         authorization_response = request.build_absolute_uri()
