@@ -281,24 +281,31 @@ class FetchEmailsAndWriteToSheet(APIView):
         # Fetch Gmail accounts from the database
         gmail_accounts = GmailAccount.objects.all()
 
+
         for account in gmail_accounts:
             user_email = account.email
-            try:
-                permission = {
-                    'type': 'user',
-                    'role': 'writer',
-                    'emailAddress': user_email
-                }
+            if not account.shared:
+                try:
+                    permission = {
+                        'type': 'user',
+                        'role': 'writer',
+                        'emailAddress': user_email
+                    }
 
-                drive_service.permissions().create(
-                    fileId=spreadsheet_id,
-                    body=permission,
-                    fields='id'
-                ).execute()
+                    drive_service.permissions().create(
+                        fileId=spreadsheet_id,
+                        body=permission,
+                        fields='id'
+                    ).execute()
+                    account.shared = True
+                    account.save()
 
-                print(f"Google Sheet shared with {user_email}")
-            except Exception as e:
-                print(f"An error occurred while sharing the Google Sheet with {user_email}: {e}")
+                    print(f"Google Sheet shared with {user_email}")
+                except Exception as e:
+                    print(f"An error occurred while sharing the Google Sheet with {user_email}: {e}")
+            else:
+                print(f"Google Sheet already shared with {user_email}")
+
     def get(self, request, *args, **kwargs):
         """Fetch emails from all stored Gmail accounts and write them to a Google Sheet."""
         all_emails = []

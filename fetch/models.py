@@ -10,6 +10,7 @@ class GmailAccount(models.Model):
     client_secret = models.TextField(blank=True)
     scopes = models.TextField(blank=True)
     expiry = models.DateTimeField(blank=True, null=True)  # Optional: Store token expiry for better management
+    shared = models.BooleanField(default=False)
 
     def __str__(self):
         return f"Credentials for {self.email}"
