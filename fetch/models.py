@@ -4,7 +4,7 @@ class GmailAccount(models.Model):
     """Model to store OAuth tokens for each Gmail account."""
     email = models.EmailField(unique=True)  # Gmail address for each account
     access_token = models.TextField(blank=True)
-    refresh_token = models.TextField(blank=True)
+    refresh_token = models.CharField(max_length=255, null=True, blank=True)  # Allow null values
     token_uri = models.TextField(blank=True)
     client_id = models.TextField(blank=True)
     client_secret = models.TextField(blank=True)

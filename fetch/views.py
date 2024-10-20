@@ -68,6 +68,7 @@ class GoogleOAuthInitiateView(APIView):
         # Generate the authorization URL
         authorization_url, _ = flow.authorization_url(
             access_type='offline',
+            prompt='consent',
             include_granted_scopes='true'
         )
 
@@ -114,18 +115,19 @@ class GoogleOAuthCallbackView(APIView):
 
     def save_credentials(self, email, credentials):
         """Save the OAuth tokens to the database."""
-        GmailAccount.objects.update_or_create(
-            email=email,
-            defaults={
-                'access_token': credentials.token,
-                'refresh_token': credentials.refresh_token,
-                'token_uri': credentials.token_uri,
-                'client_id': credentials.client_id,
-                'client_secret': credentials.client_secret,
-                'scopes': json.dumps(credentials.scopes),
-                'expiry': credentials.expiry
-            }
-        )
+        gmail_account, created = GmailAccount.objects.get_or_create(email=email)
+
+        # Only update the refresh_token if it is available
+        refresh_token = credentials.refresh_token if credentials.refresh_token else gmail_account.refresh_token
+
+        gmail_account.access_token = credentials.token
+        gmail_account.refresh_token = refresh_token  # Keep existing refresh_token if new one is not provided
+        gmail_account.token_uri = credentials.token_uri
+        gmail_account.client_id = credentials.client_id
+        gmail_account.client_secret = credentials.client_secret
+        gmail_account.scopes = json.dumps(credentials.scopes)
+        gmail_account.expiry = credentials.expiry
+        gmail_account.save()
 
 
 
