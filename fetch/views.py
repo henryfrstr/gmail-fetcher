@@ -19,6 +19,7 @@ import requests
 from decouple import config
 import json
 import os
+import re
 
 # Define where the credentials file will be saved (same level as your view)
 CREDENTIALS_FILE_PATH = os.path.join(os.path.dirname(__file__), 'credentials.json')
@@ -49,11 +50,11 @@ SCOPES = [
     'openid',
     'https://www.googleapis.com/auth/userinfo.email',  # Use the full URL for email
     'https://www.googleapis.com/auth/spreadsheets',
-    'https://www.googleapis.com/auth/drive.file'
+    'https://www.googleapis.com/auth/drive'
 ]
 
 # Path to the Google Sheet
-SPREADSHEET_ID = '1yc0oyuEBT6VDvVmF-6x3pVqjQzQIt6_WC5IgUYdJV90'
+SPREADSHEET_ID = '1jPKJPZjMig4nazbdr_L38DroLr8qYaIFkLKnME1Kucw'
 RANGE_NAME = 'Sheet1!A1:D1000'  # Adjust the range as needed
 
 class GoogleOAuthInitiateView(APIView):
@@ -157,18 +158,24 @@ class FetchEmailsAndWriteToSheet(APIView):
 
     def fetch_emails(self, gmail_service, query='subject:"Your funds of"'):
         """Fetch emails based on a specific query."""
-        results = gmail_service.users().messages().list(userId='me', q=query).execute()
-        messages = results.get('messages', [])
-        email_data = []
+        try:
+            results = gmail_service.users().messages().list(userId='me', q=query).execute()
+            messages = results.get('messages', [])
+            email_data = []
 
-        for msg in messages:
-            msg_detail = gmail_service.users().messages().get(userId='me', id=msg['id']).execute()
-            email_data.append(self.parse_email(msg_detail))
+            for msg in messages:
+                msg_detail = gmail_service.users().messages().get(userId='me', id=msg['id']).execute()
+                email_data.append(self.parse_email(msg_detail))
 
-        return email_data
+            return email_data
+        except Exception as error:
+            print(f"An error occurred: {error}")
+            return None
+
+
 
     def parse_email(self, message):
-        """Extract email details like date, from, subject, and body."""
+        """Extract email details like date, from, subject, body, funds, and currency."""
         headers = message['payload']['headers']
         email_data = {}
 
@@ -179,6 +186,11 @@ class FetchEmailsAndWriteToSheet(APIView):
                 email_data['from'] = header['value']
             elif header['name'] == 'Subject':
                 email_data['subject'] = header['value']
+
+                # Extract funds and currency from the subject using regex
+                funds, currency = self.extract_funds_and_currency(header['value'])
+                email_data['funds'] = funds
+                email_data['currency'] = currency
 
         body = message['payload'].get('body', {}).get('data', '')
         if not body:
@@ -195,39 +207,52 @@ class FetchEmailsAndWriteToSheet(APIView):
 
         return email_data
 
+    def extract_funds_and_currency(self, subject):
+        """Extract funds and currency from the subject line using regex."""
+        # Pattern to match the funds and currency in the subject line
+        sub_list = subject.split(' ')
+
+        if sub_list:
+            funds = sub_list[3].strip('$') # The numeric value
+            currency = sub_list[4]  # The currency (letters or symbols)
+            return funds, currency
+        else:
+            return None, None
+
+
     def clear_sheet(self, sheets_service, spreadsheet_id, range_name):
         """Clear the data in the specified range of the Google Sheet."""
         sheet = sheets_service.spreadsheets()
         sheet.values().clear(spreadsheetId=spreadsheet_id, range=range_name).execute()
 
-    def create_new_sheet(self, sheets_service):
-        """Create a new Google Sheet programmatically and return its spreadsheet ID."""
-        # Request body for creating a new spreadsheet
-        sheet_body = {
-            'properties': {
-                'title': 'New Email Data Sheet'  # Set the title for the new sheet
-            }
-        }
+    # def create_new_sheet(self, sheets_service):
+    #     """Create a new Google Sheet programmatically and return its spreadsheet ID."""
+    #     # Request body for creating a new spreadsheet
+    #     sheet_body = {
+    #         'properties': {
+    #             'title': 'New Email Data Sheet'  # Set the title for the new sheet
+    #         }
+    #     }
 
-        # Create the new spreadsheet
-        sheet = sheets_service.spreadsheets().create(body=sheet_body).execute()
+    #     # Create the new spreadsheet
+    #     sheet = sheets_service.spreadsheets().create(body=sheet_body).execute()
 
-        # Get the spreadsheet ID of the new sheet
-        spreadsheet_id = sheet['spreadsheetId']
-        print(f"New spreadsheet created with ID: {spreadsheet_id}")
+    #     # Get the spreadsheet ID of the new sheet
+    #     spreadsheet_id = sheet['spreadsheetId']
+    #     print(f"New spreadsheet created with ID: {spreadsheet_id}")
 
-        # Construct the Google Sheet URL
-        sheet_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}"
-        print(f"New spreadsheet URL: {sheet_url}")
+    #     # Construct the Google Sheet URL
+    #     sheet_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}"
+    #     print(f"New spreadsheet URL: {sheet_url}")
 
-        return spreadsheet_id
+    #     return spreadsheet_id
 
     def write_to_sheet(self, sheets_service, data, spreadsheet_id):
         """Write email data to a newly created Google Sheet, including column titles."""
         sheet = sheets_service.spreadsheets()
 
         # Define the headers (titles for columns)
-        headers = ['Date', 'From', 'Subject', 'Body', 'Email Address']
+        headers = ['Date', 'From', 'Subject', 'Body', 'Funds', 'Currency', 'Email Address']
 
         # Prepare the data with headers first
         body = {
@@ -235,7 +260,9 @@ class FetchEmailsAndWriteToSheet(APIView):
         }
 
         # Write data to the new sheet (using 'Sheet1' by default for a new sheet)
-        RANGE_NAME = 'Sheet1!A1'  # This writes to the first sheet in the new spreadsheet
+        # RANGE_NAME = 'Sheet1!A1'  # This writes to the first sheet in the new spreadsheet
+
+        self.clear_sheet(sheets_service, SPREADSHEET_ID, RANGE_NAME)
 
         # Write the data
         sheet.values().append(
@@ -249,25 +276,29 @@ class FetchEmailsAndWriteToSheet(APIView):
         """Create and return the Google Drive API service."""
         return build('drive', 'v3', credentials=credentials)
 
-    def share_google_sheet(self, drive_service, spreadsheet_id, user_email):
-        """Share the Google Sheet with the specified user email."""
-        try:
-            permission = {
-                'type': 'user',
-                'role': 'writer',
-                'emailAddress': user_email
-            }
+    def share_google_sheet(self, drive_service, spreadsheet_id):
+        """Share the Google Sheet with the Gmail accounts from the database."""
+        # Fetch Gmail accounts from the database
+        gmail_accounts = GmailAccount.objects.all()
 
-            drive_service.permissions().create(
-                fileId=spreadsheet_id,
-                body=permission,
-                fields='id'
-            ).execute()
+        for account in gmail_accounts:
+            user_email = account.email
+            try:
+                permission = {
+                    'type': 'user',
+                    'role': 'writer',
+                    'emailAddress': user_email
+                }
 
-            print(f"Google Sheet shared with {user_email}")
-        except Exception as e:
-            print(f"An error occurred while sharing the Google Sheet: {e}")
+                drive_service.permissions().create(
+                    fileId=spreadsheet_id,
+                    body=permission,
+                    fields='id'
+                ).execute()
 
+                print(f"Google Sheet shared with {user_email}")
+            except Exception as e:
+                print(f"An error occurred while sharing the Google Sheet with {user_email}: {e}")
     def get(self, request, *args, **kwargs):
         """Fetch emails from all stored Gmail accounts and write them to a Google Sheet."""
         all_emails = []
@@ -286,25 +317,33 @@ class FetchEmailsAndWriteToSheet(APIView):
 
             if emails:
                 # Format the data for Google Sheets
-                formatted_data = [[email['date'], email['from'], email['subject'], email['body'], account.email] for email in emails]
+                formatted_data = [
+                [email['date'], email['from'], email['subject'], email['body'], email['funds'], email['currency'], account.email]
+                for email in emails
+                ]
                 all_emails.extend(formatted_data)
 
         # If emails were fetched, write them to Google Sheets
         if all_emails:
-            # Initialize the Google Sheets service and write the data (similar to before)
+            # Initialize the Google Sheets service
             sheets_service = build('sheets', 'v4', credentials=creds)
 
-            # Create a new sheet and get its spreadsheet ID
-            new_spreadsheet_id = self.create_new_sheet(sheets_service)
+            # # Create a new sheet and get its spreadsheet ID
+            # new_spreadsheet_id = self.create_new_sheet(sheets_service)
 
-            self.write_to_sheet(sheets_service, all_emails, new_spreadsheet_id)
+            self.write_to_sheet(sheets_service, all_emails, SPREADSHEET_ID)
 
             # Now share the Google Sheet programmatically with the user
             drive_service = self.get_drive_service(creds)
-            user_email = request.data.get("email")
-            self.share_google_sheet(drive_service, SPREADSHEET_ID, user_email)
+            self.share_google_sheet(drive_service, SPREADSHEET_ID)
 
-            return Response({"message": "Emails fetched, written to the sheet, and sheet shared successfully."}, status=status.HTTP_200_OK)
+            # Return the fetched emails and the sheet URL
+            sheet_url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}"
+            return Response({
+                "message": "Emails fetched, written to the sheet, and sheet shared successfully.",
+                "emails": all_emails,  # Return the emails as part of the response
+                "sheet_url": sheet_url
+            }, status=status.HTTP_200_OK)
         else:
             return Response({"message": "No emails found."}, status=status.HTTP_404_NOT_FOUND)
 

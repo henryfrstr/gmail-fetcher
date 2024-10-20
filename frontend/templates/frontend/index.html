@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Google OAuth</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+
+        #auth-button,
+        #fetch-data-button {
+            padding: 10px 20px;
+            font-size: 16px;
+            margin: 10px;
+            cursor: pointer;
+            background-color: #4285F4;
+            color: white;
+            border: none;
+            border-radius: 5px;
+        }
+
+        #fetch-data-button {
+            background-color: #34A853;
+        }
+
+        #output {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ccc;
+        }
+    </style>
+</head>
+
+<body>
+    {% load static %} <!-- This is the tag that enables static file handling -->
+
+    <h1>Google OAuth and Fetch Data</h1>
+
+    <!-- Include the config.js file -->
+    <script src="{% static 'frontend/config.js' %}"></script>
+
+    <button id="auth-button">Initialize Google OAuth</button>
+    <button id="fetch-data-button">Fetch Data</button>
+
+    <div id="output"></div>
+
+    <script>
+        // URL of your backend where OAuth is initialized
+        const authUrl = `https://127.0.0.1:8000/oauth2initiate`;
+
+        // When the user clicks the "Initialize Google OAuth" button
+        document.getElementById('auth-button').addEventListener('click', function () {
+            window.location.href = authUrl;
+        });
+
+        // URL of your backend to fetch the data after OAuth is completed
+        const fetchDataUrl = `https://127.0.0.1:8000/fetch-emails/`;
+
+        // When the user clicks the "Fetch Data" button
+        document.getElementById('fetch-data-button').addEventListener('click', function () {
+            // Disable the button to prevent multiple clicks while processing
+            document.getElementById('fetch-data-button').disabled = true;
+
+            // Show progress message
+            document.getElementById('output').textContent = "Your request is being processed. Please wait...";
+
+            fetch(fetchDataUrl)
+                .then(response => response.json())
+                .then(data => {
+                    // After processing is complete, open the Google Sheet in a new tab
+                    if (data.sheet_url) {
+                        window.open(data.sheet_url, '_blank');  // Open the Google Sheet in a new tab
+                        document.getElementById('output').textContent = "Your Google Sheet has been created successfully!";
+                    } else {
+                        document.getElementById('output').textContent = "No emails found.";
+                    }
+
+                    // Re-enable the button after processing
+                    document.getElementById('fetch-data-button').disabled = false;
+                })
+                .catch(error => {
+                    document.getElementById('output').textContent = "Error processing your request.";
+                    console.error('Error:', error);
+
+                    // Re-enable the button after processing
+                    document.getElementById('fetch-data-button').disabled = false;
+                });
+        });
+    </script>
+</body>
+
+</html>
