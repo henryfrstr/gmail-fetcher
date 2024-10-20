@@ -31,21 +31,42 @@
             padding: 10px;
             border: 1px solid #ccc;
         }
+
+        .email-list {
+            margin-top: 20px;
+            border-top: 1px solid #ccc;
+            padding-top: 10px;
+        }
+
+        .email-list-item {
+            font-size: 18px;
+            color: #555;
+            margin: 5px 0;
+        }
     </style>
 </head>
 
 <body>
-    {% load static %} <!-- This is the tag that enables static file handling -->
-
     <h1>Google OAuth and Fetch Data</h1>
-
-    <!-- Include the config.js file -->
-    <script src="{% static 'frontend/config.js' %}"></script>
 
     <button id="auth-button">Initialize Google OAuth</button>
     <button id="fetch-data-button">Fetch Data</button>
 
     <div id="output"></div>
+
+    <!-- Show authorized emails -->
+    <div class="email-list">
+        <h2>Authorized Emails:</h2>
+        {% if authorized_emails %}
+        <ul>
+            {% for email in authorized_emails %}
+            <li class="email-list-item">{{ email.email }}</li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p>No authorized emails found.</p>
+        {% endif %}
+    </div>
 
     <script>
         // URL of your backend where OAuth is initialized

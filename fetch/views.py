@@ -9,7 +9,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 
-from django.shortcuts import redirect
+from django.shortcuts import render, redirect
 
 from .models import GmailAccount
 
@@ -100,7 +100,9 @@ class GoogleOAuthCallbackView(APIView):
 
         self.save_credentials(email, credentials)
 
-        return Response({"message": f"OAuth completed for {email}"}, status=status.HTTP_200_OK)
+        # Pass the success message to the template and redirect to the success page
+        success_message = f"OAuth completed for {email}"
+        return render(request, 'frontend/success.html', {'message': success_message})
 
     def get_email_from_userinfo(self, credentials):
         """Retrieve the user's email from the userinfo endpoint if id_token is not available or invalid."""
