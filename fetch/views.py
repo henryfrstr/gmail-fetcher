@@ -51,8 +51,8 @@ SCOPES = [
 ]
 
 # Path to the Google Sheet
-# SPREADSHEET_ID = '1jPKJPZjMig4nazbdr_L38DroLr8qYaIFkLKnME1Kucw'
-SPREADSHEET_ID = '1_DMosMgIrXZdnrm9ff36XmuppyJstu38lTrS7WSMS9c'
+SPREADSHEET_ID = '1jPKJPZjMig4nazbdr_L38DroLr8qYaIFkLKnME1Kucw'
+# SPREADSHEET_ID = '1_DMosMgIrXZdnrm9ff36XmuppyJstu38lTrS7WSMS9c'
 RANGE_NAME = 'Sheet1!A1:D1000'  # Adjust the range as needed
 
 class GoogleOAuthInitiateView(APIView):
