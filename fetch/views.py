@@ -2,14 +2,15 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import Flow
+from googleapiclient.errors import HttpError
 
-from rest_framework.views import APIView
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 
 from django.shortcuts import render, redirect
+from django.db import IntegrityError
 
 from .models import GmailAccount
 
@@ -17,7 +18,6 @@ import json
 import base64
 import requests
 from decouple import config
-import json
 import os
 
 
@@ -42,101 +42,104 @@ GOOGLE_CREDENTIALS = {
 with open(CREDENTIALS_FILE_PATH, 'w') as f:
     json.dump(GOOGLE_CREDENTIALS, f)
 
-# Now you can use the credentials.json in your OAuth flow
-
-
-
 SCOPES = [
     'https://www.googleapis.com/auth/gmail.readonly',
     'openid',
-    'https://www.googleapis.com/auth/userinfo.email',  # Use the full URL for email
+    'https://www.googleapis.com/auth/userinfo.email',
     'https://www.googleapis.com/auth/spreadsheets',
     'https://www.googleapis.com/auth/drive'
 ]
 
 # Path to the Google Sheet
-SPREADSHEET_ID = '1jPKJPZjMig4nazbdr_L38DroLr8qYaIFkLKnME1Kucw'
+# SPREADSHEET_ID = '1jPKJPZjMig4nazbdr_L38DroLr8qYaIFkLKnME1Kucw'
+SPREADSHEET_ID = '1_DMosMgIrXZdnrm9ff36XmuppyJstu38lTrS7WSMS9c'
 RANGE_NAME = 'Sheet1!A1:D1000'  # Adjust the range as needed
 
 class GoogleOAuthInitiateView(APIView):
     permission_classes = [AllowAny]
+
     def get(self, request, *args, **kwargs):
-        """Initiate OAuth flow to authorize a Gmail account."""
-        flow = Flow.from_client_secrets_file(CREDENTIALS_FILE_PATH, SCOPES)
-        flow.redirect_uri = f'{BASE_URL}/oauth2callback'
+        try:
+            flow = Flow.from_client_secrets_file(CREDENTIALS_FILE_PATH, SCOPES)
+            flow.redirect_uri = f'{BASE_URL}/oauth2callback'
 
-        # Generate the authorization URL
-        authorization_url, _ = flow.authorization_url(
-            access_type='offline',
-            prompt='consent',
-            include_granted_scopes='true'
-        )
+            # Generate the authorization URL
+            authorization_url, _ = flow.authorization_url(
+                access_type='offline',
+                prompt='consent',
+                include_granted_scopes='true'
+            )
 
-        # Redirect the user to Google's OAuth page for login
-        return redirect(authorization_url)
+            return redirect(authorization_url)
+        except Exception as e:
+            return Response({"error": f"Failed to initiate OAuth: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class GoogleOAuthCallbackView(APIView):
     permission_classes = [AllowAny]
+
     def get(self, request, *args, **kwargs):
-        """Handle the callback from Google and save the credentials."""
-        flow = Flow.from_client_secrets_file(CREDENTIALS_FILE_PATH, SCOPES)
-        flow.redirect_uri = f'{BASE_URL}/oauth2callback'
+        try:
+            flow = Flow.from_client_secrets_file(CREDENTIALS_FILE_PATH, SCOPES)
+            flow.redirect_uri = f'{BASE_URL}/oauth2callback'
 
-        # Get the authorization code from the URL query parameters
-        authorization_response = request.build_absolute_uri()
-        flow.fetch_token(authorization_response=authorization_response)
+            authorization_response = request.build_absolute_uri()
+            flow.fetch_token(authorization_response=authorization_response)
 
-        # Get credentials and store them in the database
-        credentials = flow.credentials
-        email = None
-        if credentials.id_token and isinstance(credentials.id_token, dict):
-            email = credentials.id_token.get('email')  # Safe access
-        else:
+            credentials = flow.credentials
             email = self.get_email_from_userinfo(credentials)
 
-        if not email:
-            return Response({"error": "Failed to retrieve email."}, status=status.HTTP_400_BAD_REQUEST)
+            if not email:
+                return Response({"error": "Failed to retrieve email."}, status=status.HTTP_400_BAD_REQUEST)
 
-        self.save_credentials(email, credentials)
+            self.save_credentials(email, credentials)
 
-        # Pass the success message to the template and redirect to the success page
-        success_message = f"OAuth completed for {email}"
-        return render(request, 'frontend/success.html', {'message': success_message})
+            success_message = f"OAuth completed for {email}"
+            return render(request, 'frontend/success.html', {'message': success_message})
+
+        except HttpError as http_error:
+            return Response({"error": f"Google API error: {str(http_error)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            return Response({"error": f"Failed during OAuth callback: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def get_email_from_userinfo(self, credentials):
-        """Retrieve the user's email from the userinfo endpoint if id_token is not available or invalid."""
-        userinfo_endpoint = 'https://openidconnect.googleapis.com/v1/userinfo'
-        headers = {'Authorization': f'Bearer {credentials.token}'}
-        response = requests.get(userinfo_endpoint, headers=headers)
+        try:
+            userinfo_endpoint = 'https://openidconnect.googleapis.com/v1/userinfo'
+            headers = {'Authorization': f'Bearer {credentials.token}'}
+            response = requests.get(userinfo_endpoint, headers=headers)
 
-        if response.status_code == 200:
-            return response.json().get('email')
-        else:
+            if response.status_code == 200:
+                return response.json().get('email')
+            return None
+        except Exception as e:
+            print(f"Error fetching user info: {e}")
             return None
 
     def save_credentials(self, email, credentials):
-        """Save the OAuth tokens to the database."""
-        gmail_account, created = GmailAccount.objects.get_or_create(email=email)
+        try:
+            gmail_account, _ = GmailAccount.objects.get_or_create(email=email)
+            refresh_token = credentials.refresh_token if credentials.refresh_token else gmail_account.refresh_token
 
-        # Only update the refresh_token if it is available
-        refresh_token = credentials.refresh_token if credentials.refresh_token else gmail_account.refresh_token
-
-        gmail_account.access_token = credentials.token
-        gmail_account.refresh_token = refresh_token  # Keep existing refresh_token if new one is not provided
-        gmail_account.token_uri = credentials.token_uri
-        gmail_account.client_id = credentials.client_id
-        gmail_account.client_secret = credentials.client_secret
-        gmail_account.scopes = json.dumps(credentials.scopes)
-        gmail_account.expiry = credentials.expiry
-        gmail_account.save()
-
+            gmail_account.access_token = credentials.token
+            gmail_account.refresh_token = refresh_token
+            gmail_account.token_uri = credentials.token_uri
+            gmail_account.client_id = credentials.client_id
+            gmail_account.client_secret = credentials.client_secret
+            gmail_account.scopes = json.dumps(credentials.scopes)
+            gmail_account.expiry = credentials.expiry
+            gmail_account.save()
+        except IntegrityError as e:
+            print(f"Error saving credentials: {e}")
+            raise Exception("Database error while saving credentials.")
+        except Exception as e:
+            print(f"Error saving credentials: {e}")
+            raise Exception("Unknown error while saving credentials.")
 
 
 class FetchEmailsAndWriteToSheet(APIView):
     permission_classes = [AllowAny]
+
     def get_credentials(self, email):
-        """Retrieve stored OAuth credentials for the specified Gmail account."""
         try:
             creds_obj = GmailAccount.objects.get(email=email)
             creds = Credentials(
@@ -148,11 +151,9 @@ class FetchEmailsAndWriteToSheet(APIView):
                 scopes=json.loads(creds_obj.scopes)
             )
 
-            # Refresh the token if it's expired
             if not creds.valid and creds.expired and creds.refresh_token:
                 creds.refresh(Request())
 
-                # Update the refreshed token in the database
                 creds_obj.access_token = creds.token
                 creds_obj.expiry = creds.expiry
                 creds_obj.save()
@@ -160,9 +161,11 @@ class FetchEmailsAndWriteToSheet(APIView):
             return creds
         except GmailAccount.DoesNotExist:
             raise Exception(f"No credentials found for {email}")
+        except Exception as e:
+            print(f"Error retrieving credentials: {e}")
+            raise
 
     def fetch_emails(self, gmail_service, query='subject:"Your funds of"'):
-        """Fetch emails based on a specific query."""
         try:
             results = gmail_service.users().messages().list(userId='me', q=query).execute()
             messages = results.get('messages', [])
@@ -173,17 +176,19 @@ class FetchEmailsAndWriteToSheet(APIView):
                 email_data.append(self.parse_email(msg_detail))
 
             return email_data
-        except Exception as error:
-            print(f"An error occurred: {error}")
+        except HttpError as error:
+            print(f"An error occurred while fetching emails: {error}")
+            raise Exception("Error fetching emails from Gmail API.")
+        except Exception as e:
+            print(f"An unknown error occurred: {e}")
             return None
-
-
 
     def parse_email(self, message):
         """Extract email details like date, from, subject, body, funds, and currency."""
         headers = message['payload']['headers']
         email_data = {}
 
+        # Extract the relevant headers
         for header in headers:
             if header['name'] == 'Date':
                 email_data['date'] = header['value']
@@ -197,6 +202,7 @@ class FetchEmailsAndWriteToSheet(APIView):
                 email_data['funds'] = funds
                 email_data['currency'] = currency
 
+        # Get the body of the email
         body = message['payload'].get('body', {}).get('data', '')
         if not body:
             parts = message['payload'].get('parts', [])
@@ -212,151 +218,169 @@ class FetchEmailsAndWriteToSheet(APIView):
 
         return email_data
 
-    def extract_funds_and_currency(self, subject):
-        """Extract funds and currency from the subject line using regex."""
-        # Pattern to match the funds and currency in the subject line
-        sub_list = subject.split(' ')
 
-        if sub_list:
-            funds = sub_list[3].strip('$') # The numeric value
-            currency = sub_list[4]  # The currency (letters or symbols)
-            return funds, currency
-        else:
-            return None, None
+    def extract_funds_and_currency(self, subject):
+        """Extract funds and currency from the subject line using regex or basic string manipulation."""
+        try:
+            # Split the subject into parts
+            sub_list = subject.split(' ')
+
+            # Check if the subject has enough parts to extract funds and currency
+            if len(sub_list) >= 5:
+                funds = sub_list[3].strip('$')  # The numeric value
+                currency = sub_list[4]  # The currency (letters or symbols)
+                return funds, currency
+            else:
+                raise ValueError("Subject format is invalid for funds and currency extraction")
+
+        except ValueError as e:
+            print(f"Value error while extracting funds and currency: {e}")
+            return "N/A", "N/A"  # Return "N/A" if the funds or currency could not be extracted
+
+        except Exception as e:
+            print(f"An unknown error occurred while extracting funds and currency: {e}")
+            return "N/A", "N/A"
 
 
     def clear_sheet(self, sheets_service, spreadsheet_id, range_name):
-        """Clear the data in the specified range of the Google Sheet."""
-        sheet = sheets_service.spreadsheets()
-        sheet.values().clear(spreadsheetId=spreadsheet_id, range=range_name).execute()
-
-    # def create_new_sheet(self, sheets_service):
-    #     """Create a new Google Sheet programmatically and return its spreadsheet ID."""
-    #     # Request body for creating a new spreadsheet
-    #     sheet_body = {
-    #         'properties': {
-    #             'title': 'New Email Data Sheet'  # Set the title for the new sheet
-    #         }
-    #     }
-
-    #     # Create the new spreadsheet
-    #     sheet = sheets_service.spreadsheets().create(body=sheet_body).execute()
-
-    #     # Get the spreadsheet ID of the new sheet
-    #     spreadsheet_id = sheet['spreadsheetId']
-    #     print(f"New spreadsheet created with ID: {spreadsheet_id}")
-
-    #     # Construct the Google Sheet URL
-    #     sheet_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}"
-    #     print(f"New spreadsheet URL: {sheet_url}")
-
-    #     return spreadsheet_id
+        try:
+            sheets_service.spreadsheets().values().clear(
+                spreadsheetId=spreadsheet_id,
+                range=range_name
+            ).execute()
+        except HttpError as error:
+            print(f"An error occurred while clearing the sheet: {error}")
+            raise Exception("Google Sheets API error during sheet clear operation.")
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            raise
 
     def write_to_sheet(self, sheets_service, data, spreadsheet_id):
-        """Write email data to a newly created Google Sheet, including column titles."""
-        sheet = sheets_service.spreadsheets()
+        try:
+            sheet = sheets_service.spreadsheets()
 
-        # Define the headers (titles for columns)
-        headers = ['Date', 'From', 'Subject', 'Body', 'Funds', 'Currency', 'Email Address']
+            headers = ['Date', 'From', 'Subject', 'Body', 'Funds', 'Currency', 'Email Address']
+            body = {'values': [headers] + data}
 
-        # Prepare the data with headers first
-        body = {
-            'values': [headers] + data  # Add the headers as the first row
-        }
+            sheet.values().append(
+                spreadsheetId=spreadsheet_id,
+                range=RANGE_NAME,
+                valueInputOption='RAW',
+                body=body
+            ).execute()
 
-        # Write data to the new sheet (using 'Sheet1' by default for a new sheet)
-        # RANGE_NAME = 'Sheet1!A1'  # This writes to the first sheet in the new spreadsheet
-
-        self.clear_sheet(sheets_service, SPREADSHEET_ID, RANGE_NAME)
-
-        # Write the data
-        sheet.values().append(
-            spreadsheetId=spreadsheet_id,
-            range=RANGE_NAME,
-            valueInputOption='RAW',
-            body=body
-        ).execute()
-
-    def get_drive_service(self, credentials):
-        """Create and return the Google Drive API service."""
-        return build('drive', 'v3', credentials=credentials)
+        except HttpError as error:
+            print(f"An error occurred while writing to the sheet: {error}")
+            raise Exception("Google Sheets API error during data write operation.")
+        except Exception as e:
+            print(f"An unknown error occurred: {e}")
+            raise
 
     def share_google_sheet(self, drive_service, spreadsheet_id):
-        """Share the Google Sheet with the Gmail accounts from the database."""
-        # Fetch Gmail accounts from the database
-        gmail_accounts = GmailAccount.objects.all()
+        try:
+            gmail_accounts = GmailAccount.objects.all()
 
+            for account in gmail_accounts:
+                user_email = account.email
+                if not account.shared:
+                    try:
+                        permission = {
+                            'type': 'user',
+                            'role': 'writer',
+                            'emailAddress': user_email
+                        }
 
-        for account in gmail_accounts:
-            user_email = account.email
-            if not account.shared:
-                try:
-                    permission = {
-                        'type': 'user',
-                        'role': 'writer',
-                        'emailAddress': user_email
-                    }
+                        drive_service.permissions().create(
+                            fileId=spreadsheet_id,
+                            body=permission,
+                            fields='id'
+                        ).execute()
+                        account.shared = True
+                        account.save()
 
-                    drive_service.permissions().create(
-                        fileId=spreadsheet_id,
-                        body=permission,
-                        fields='id'
-                    ).execute()
-                    account.shared = True
-                    account.save()
-
-                    print(f"Google Sheet shared with {user_email}")
-                except Exception as e:
-                    print(f"An error occurred while sharing the Google Sheet with {user_email}: {e}")
-            else:
-                print(f"Google Sheet already shared with {user_email}")
+                        print(f"Google Sheet shared with {user_email}")
+                    except HttpError as e:
+                        print(f"Google Sheets API error: {e}")
+                    except Exception as e:
+                        print(f"An unknown error occurred while sharing with {user_email}: {e}")
+                else:
+                    print(f"Google Sheet already shared with {user_email}")
+        except Exception as e:
+            print(f"Error sharing Google Sheet: {e}")
+            raise
 
     def get(self, request, *args, **kwargs):
-        """Fetch emails from all stored Gmail accounts and write them to a Google Sheet."""
-        all_emails = []
+        try:
+            all_emails = []
 
-        # Fetch credentials for all Gmail accounts in the database
-        gmail_accounts = GmailAccount.objects.all()
+            # Fetch credentials for all Gmail accounts in the database
+            gmail_accounts = GmailAccount.objects.all()
 
-        for account in gmail_accounts:
-            creds = self.get_credentials(account.email)
+            for account in gmail_accounts:
+                creds = self.get_credentials(account.email)
 
-            # Initialize the Gmail service with the credentials
-            gmail_service = build('gmail', 'v1', credentials=creds)
+                # Initialize the Gmail service with the credentials
+                gmail_service = build('gmail', 'v1', credentials=creds)
 
-            # Fetch emails from the Gmail account
-            emails = self.fetch_emails(gmail_service)
+                # Fetch emails from the Gmail account
+                emails = self.fetch_emails(gmail_service)
+                print(len(emails), "emails fetched from", account.email)
 
-            if emails:
-                # Format the data for Google Sheets
-                formatted_data = [
-                [email['date'], email['from'], email['subject'], email['body'], email['funds'], email['currency'], account.email]
-                for email in emails
-                ]
-                all_emails.extend(formatted_data)
+                if emails:
+                    # Format the data for Google Sheets
+                    formatted_data = [
+                        [email['date'], email['from'], email['subject'], email['body'], email['funds'], email['currency'], account.email]
+                        for email in emails
+                    ]
+                    all_emails.extend(formatted_data)
+            print(len(all_emails), "all emails fetched")
 
-        # If emails were fetched, write them to Google Sheets
-        if all_emails:
-            # Initialize the Google Sheets service
-            sheets_service = build('sheets', 'v4', credentials=creds)
+            if all_emails:
+                print('**********************************')
+                # Initialize the Google Sheets and Google Drive services
+                sheets_service = build('sheets', 'v4', credentials=creds)
+                drive_service = build('drive', 'v3', credentials=creds)
+                print('111**********************************')
 
-            # # Create a new sheet and get its spreadsheet ID
-            # new_spreadsheet_id = self.create_new_sheet(sheets_service)
+                # # Ensure the sheet exists by checking permissions or ownership
+                # try:
+                #     # Check if the file exists and is accessible to the authenticated user
+                #     sheet = drive_service.files().get(fileId=SPREADSHEET_ID).execute()
+                # except HttpError as e:
+                #     if e.resp.status == 404:
+                #         return Response({"error": "Google Sheet not found."}, status=status.HTTP_404_NOT_FOUND)
+                #     else:
+                #         raise
 
-            self.write_to_sheet(sheets_service, all_emails, SPREADSHEET_ID)
+                print('222**********************************')
+                # Share the Google Sheet programmatically with the necessary users before writing
+                self.share_google_sheet(drive_service, SPREADSHEET_ID)
 
-            # Now share the Google Sheet programmatically with the user
-            drive_service = self.get_drive_service(creds)
-            self.share_google_sheet(drive_service, SPREADSHEET_ID)
+                # Clear the sheet before writing the new data
+                try:
+                    self.clear_sheet(sheets_service, SPREADSHEET_ID, RANGE_NAME)
+                except HttpError as e:
+                    if e.resp.status == 403:
+                        return Response({"error": "The caller does not have permission to modify the sheet."}, status=status.HTTP_403_FORBIDDEN)
+                    else:
+                        raise
 
-            # Return the fetched emails and the sheet URL
-            sheet_url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}"
-            return Response({
-                "message": "Emails fetched, written to the sheet, and sheet shared successfully.",
-                "emails": all_emails,  # Return the emails as part of the response
-                "sheet_url": sheet_url
-            }, status=status.HTTP_200_OK)
-        else:
-            return Response({"message": "No emails found."}, status=status.HTTP_404_NOT_FOUND)
+                print('333**********************************')
+                # Write data to the sheet after sharing
+                self.write_to_sheet(sheets_service, all_emails, SPREADSHEET_ID)
 
+                # Return the fetched emails and the sheet URL
+                sheet_url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}"
+                return Response({
+                    "message": "Emails fetched, written to the sheet, and sheet shared successfully.",
+                    "emails": all_emails,
+                    "sheet_url": sheet_url
+                }, status=status.HTTP_200_OK)
+            else:
+                return Response({"message": "No emails found."}, status=status.HTTP_404_NOT_FOUND)
+
+        except HttpError as e:
+            return Response({"error": f"Google API error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            return Response({"error": f"An error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
