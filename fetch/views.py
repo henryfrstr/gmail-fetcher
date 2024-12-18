@@ -53,7 +53,7 @@ SCOPES = [
 # Path to the Google Sheet
 SPREADSHEET_ID = '1jPKJPZjMig4nazbdr_L38DroLr8qYaIFkLKnME1Kucw'
 # SPREADSHEET_ID = '1_DMosMgIrXZdnrm9ff36XmuppyJstu38lTrS7WSMS9c'
-RANGE_NAME = 'Sheet1!A1:D1000'  # Adjust the range as needed
+RANGE_NAME = 'Sheet1!A1:H10000'  # Adjust the range as needed
 
 class GoogleOAuthInitiateView(APIView):
     permission_classes = [AllowAny]
@@ -167,13 +167,27 @@ class FetchEmailsAndWriteToSheet(APIView):
 
     def fetch_emails(self, gmail_service, query='subject:"Your funds of"'):
         try:
-            results = gmail_service.users().messages().list(userId='me', q=query).execute()
-            messages = results.get('messages', [])
             email_data = []
+            page_token = None
 
-            for msg in messages:
-                msg_detail = gmail_service.users().messages().get(userId='me', id=msg['id']).execute()
-                email_data.append(self.parse_email(msg_detail))
+            while True:
+                # Fetch messages with pagination
+                results = gmail_service.users().messages().list(
+                    userId='me',
+                    q=query,
+                    maxResults=500,  # Fetch up to 500 messages per request (maximum allowed)
+                    pageToken=page_token  # Use the page token for subsequent requests
+                ).execute()
+
+                messages = results.get('messages', [])
+                for msg in messages:
+                    msg_detail = gmail_service.users().messages().get(userId='me', id=msg['id']).execute()
+                    email_data.append(self.parse_email(msg_detail))
+
+                # Check for the next page token
+                page_token = results.get('nextPageToken')
+                if not page_token:  # No more pages to fetch
+                    break
 
             return email_data
         except HttpError as error:
@@ -259,9 +273,11 @@ class FetchEmailsAndWriteToSheet(APIView):
         try:
             sheet = sheets_service.spreadsheets()
 
+            # Define headers and the body of data
             headers = ['Date', 'From', 'Subject', 'Body', 'Funds', 'Currency', 'Email Address']
             body = {'values': [headers] + data}
 
+            # Append data to the spreadsheet
             sheet.values().append(
                 spreadsheetId=spreadsheet_id,
                 range=RANGE_NAME,
@@ -269,9 +285,50 @@ class FetchEmailsAndWriteToSheet(APIView):
                 body=body
             ).execute()
 
+            # Format the "Funds" column (E column, index starts at 4 in 0-based index)
+            self.format_funds_column(sheets_service, spreadsheet_id)
+
         except HttpError as error:
             print(f"An error occurred while writing to the sheet: {error}")
             raise Exception("Google Sheets API error during data write operation.")
+        except Exception as e:
+            print(f"An unknown error occurred: {e}")
+            raise
+
+    def format_funds_column(self, sheets_service, spreadsheet_id):
+        try:
+            # Define the request to format the column as a number
+            requests = [
+                {
+                    "repeatCell": {
+                        "range": {
+                            "sheetId": 0,  # Default sheet ID is usually 0; update if necessary
+                            "startRowIndex": 1,  # Skip the header row
+                            "startColumnIndex": 4,  # E column (0-based index)
+                            "endColumnIndex": 5
+                        },
+                        "cell": {
+                            "userEnteredFormat": {
+                                "numberFormat": {
+                                    "type": "NUMBER",
+                                    "pattern": "#,##0.00"  # Adjust pattern if needed
+                                }
+                            }
+                        },
+                        "fields": "userEnteredFormat.numberFormat"
+                    }
+                }
+            ]
+
+            # Execute the batch update request
+            sheets_service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body={"requests": requests}
+            ).execute()
+
+        except HttpError as error:
+            print(f"An error occurred while formatting the 'Funds' column: {error}")
+            raise Exception("Google Sheets API error during column formatting.")
         except Exception as e:
             print(f"An unknown error occurred: {e}")
             raise
