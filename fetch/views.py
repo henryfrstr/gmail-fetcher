@@ -165,18 +165,17 @@ class FetchEmailsAndWriteToSheet(APIView):
             print(f"Error retrieving credentials: {e}")
             raise
 
-    def fetch_emails(self, gmail_service, query='subject:"Your funds of"'):
+    def fetch_emails(self, gmail_service, query='subject:"Your funds of"', batch_size=100):
         try:
             email_data = []
             page_token = None
 
-            while True:
-                # Fetch messages with pagination
+            for _ in range(batch_size):
                 results = gmail_service.users().messages().list(
                     userId='me',
                     q=query,
-                    maxResults=500,  # Fetch up to 500 messages per request (maximum allowed)
-                    pageToken=page_token  # Use the page token for subsequent requests
+                    maxResults=100,  # Fetch up to 100 messages per batch
+                    pageToken=page_token
                 ).execute()
 
                 messages = results.get('messages', [])
@@ -184,18 +183,14 @@ class FetchEmailsAndWriteToSheet(APIView):
                     msg_detail = gmail_service.users().messages().get(userId='me', id=msg['id']).execute()
                     email_data.append(self.parse_email(msg_detail))
 
-                # Check for the next page token
                 page_token = results.get('nextPageToken')
-                if not page_token:  # No more pages to fetch
+                if not page_token:
                     break
 
             return email_data
         except HttpError as error:
             print(f"An error occurred while fetching emails: {error}")
             raise Exception("Error fetching emails from Gmail API.")
-        except Exception as e:
-            print(f"An unknown error occurred: {e}")
-            return None
 
     def parse_email(self, message):
         """Extract email details like date, from, subject, body, funds, and currency."""
