@@ -19,6 +19,7 @@ import base64
 import requests
 from decouple import config
 import os
+from dateutil import parser
 
 
 # Define where the credentials file will be saved (same level as your view)
@@ -200,7 +201,16 @@ class FetchEmailsAndWriteToSheet(APIView):
         # Extract the relevant headers
         for header in headers:
             if header['name'] == 'Date':
-                email_data['date'] = header['value']
+                raw_date = header['value']  # Original date string
+                try:
+                    # Parse the original date string
+                    parsed_date = parser.parse(raw_date)
+                    # Format the date to "16 Dec 2024"
+                    email_data['date'] = parsed_date.strftime('%d %b %Y')
+                except Exception as e:
+                    print(f"Error parsing date: {raw_date}. Error: {e}")
+                    # Fallback to the raw date if parsing fails
+                    email_data['date'] = raw_date
             elif header['name'] == 'From':
                 email_data['from'] = header['value']
             elif header['name'] == 'Subject':
@@ -298,7 +308,7 @@ class FetchEmailsAndWriteToSheet(APIView):
                     "repeatCell": {
                         "range": {
                             "sheetId": 0,  # Default sheet ID is usually 0; update if necessary
-                            "startRowIndex": 1,  # Skip the header row
+                            "startRowIndex": 0,  # Skip the header row
                             "startColumnIndex": 4,  # E column (0-based index)
                             "endColumnIndex": 5
                         },
@@ -381,7 +391,7 @@ class FetchEmailsAndWriteToSheet(APIView):
                 if emails:
                     # Format the data for Google Sheets
                     formatted_data = [
-                        [email['date'], email['from'], email['subject'], email['body'], email['funds'], email['currency'], account.email]
+                        [email['date'], email['from'], email['subject'], email['body'], float(email['funds'].replace(',', '')), email['currency'], account.email]
                         for email in emails
                     ]
                     all_emails.extend(formatted_data)
