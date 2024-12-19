@@ -391,7 +391,7 @@ class FetchEmailsAndWriteToSheet(APIView):
                 if emails:
                     # Format the data for Google Sheets
                     formatted_data = [
-                        [email['date'], email['from'], email['subject'], email['body'], float(email['funds'].replace(',', '')), email['currency'], account.email]
+                        [email['date'], email['from'], email['subject'], email['body'], email['funds'], email['currency'], account.email]
                         for email in emails
                     ]
                     all_emails.extend(formatted_data)
